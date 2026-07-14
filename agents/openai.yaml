@@ -1,0 +1,4 @@
+interface:
+  display_name: "OptiAI"
+  short_description: "Audit and correct optical alignment in SVG icons"
+  default_prompt: "Use $optiai to audit this SVG icon, propose an optical correction, and generate a visual comparison."
