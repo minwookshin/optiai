@@ -1,4 +1,4 @@
 interface:
   display_name: "OptiAI"
-  short_description: "Measure and safely correct SVG optical alignment"
-  default_prompt: "Use $optiai to audit this SVG, review its optical offset, and apply only a clipping-safe verified correction."
+  short_description: "Audit, compare, and learn SVG optical alignment"
+  default_prompt: "Use $optiai to audit this SVG, collect blinded preference evidence when useful, and apply only a clipping-safe verified correction."
