@@ -48,6 +48,6 @@ Check font ascent/descent, line-height, cap height, inline `vertical-align`, fle
 
 Store the approved correction once and add metadata so future maintainers can see that it is intentional.
 
-## Existing ecosystem caveat
+## Model caveat
 
-The pinned `optical-center@0.2.0-alpha.0` engine is experimental. Its recommendation is useful evidence, not a universal perceptual truth. In particular, review vertical and horizontal axes independently: an otherwise symmetric glyph can receive a vertical bias from the model. Preserve the raw engine result and version in the audit, then record any reviewed axis override separately.
+OptiAI's local alpha-centroid model is deliberately narrow. It measures rendered luminance distribution, but it does not understand brand intent, semantic weight, detached marks, or all contour-based effects. Its proposal is experimental evidence, not a probability or perceptual truth. Review vertical and horizontal axes independently and prefer `ABSTAIN` when the supported evidence is incomplete.
