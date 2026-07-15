@@ -12,6 +12,7 @@ const fixtures = join(root, 'tests', 'fixtures');
 const script = (name) => join(root, 'scripts', name);
 const temp = () => mkdtempSync(join(tmpdir(), 'optiai-test-'));
 const run = (name, args) => spawnSync(process.execPath, [script(name), ...args], { cwd: root, encoding: 'utf8' });
+const runWithEnv = (name, args, env) => spawnSync(process.execPath, [script(name), ...args], { cwd: root, encoding: 'utf8', env: { ...process.env, ...env } });
 const json = (path) => JSON.parse(readFileSync(path, 'utf8'));
 const containsKey = (value, key) => value && typeof value === 'object'
   && (Object.prototype.hasOwnProperty.call(value, key) || Object.values(value).some((item) => containsKey(item, key)));
@@ -114,6 +115,91 @@ test('decision: detached components and symmetric off-center bounds abstain', ()
   assert.ok(offCenter.report.decision.reasonCodes.includes('fix-svg-bounds-first'));
 });
 
+test('ensemble engine records deterministic multi-signal evidence for balanced artwork', () => {
+  const first = analyze('centered.svg', ['--engine', 'ensemble']);
+  const second = analyze('centered.svg', ['--engine', 'ensemble']);
+  assert.equal(first.result.status, 0, first.result.stderr);
+  assert.equal(first.report.engine.model, 'multi-signal-raster-v1');
+  assert.equal(first.report.decision.status, 'NO_CHANGE');
+  assert.deepEqual(first.report.measurements.reference.signals, second.report.measurements.reference.signals);
+  assert.equal(first.report.derivedSha256, second.report.derivedSha256);
+  assert.ok(first.report.measurements.reference.signals.edge.centroid);
+  assert.ok(first.report.measurements.reference.signals.convexHull.centroid);
+  assert.ok(first.report.measurements.reference.signals.symmetry.axis);
+  assert.equal(first.report.recommendation.evidence.signalAgreement.band, 'strong');
+  assert.equal(containsKey(first.report, 'confidence'), false);
+});
+
+test('ensemble audit bytes are deterministic across locale and timezone', () => {
+  const dir = temp();
+  const source = join(fixtures, 'play.svg');
+  const first = join(dir, 'first.json');
+  const second = join(dir, 'second.json');
+  const args = [source, '--engine', 'ensemble', '--sizes', '16,24,32'];
+  assert.equal(runWithEnv('analyze-svg.mjs', [...args, '--output', first], { LANG: 'C', TZ: 'UTC' }).status, 0);
+  assert.equal(runWithEnv('analyze-svg.mjs', [...args, '--output', second], { LANG: 'en_US.UTF-8', TZ: 'America/New_York' }).status, 0);
+  assert.equal(readFileSync(first, 'utf8'), readFileSync(second, 'utf8'));
+});
+
+test('ensemble engine preserves play-axis symmetry and exposes per-size evidence', () => {
+  const { result, report } = analyze('play.svg', ['--engine', 'ensemble']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(report.decision.status, 'REVIEW');
+  assert.ok(report.recommendation.dxPercent > 0);
+  assert.ok(Math.abs(report.recommendation.dyPercent) < 0.1);
+  assert.ok(report.measurements.bySize.every((measurement) => measurement.signals));
+  assert.ok(report.recommendation.evidence.signalAgreement.axes.x.signalCount >= 3);
+  assert.ok(report.recommendation.evidence.signalAgreement.axes.y.signalCount >= 3);
+});
+
+test('ensemble engine abstains when plausible perceptual signals materially disagree', () => {
+  const { result, report } = analyze('signal-disagreement.svg', ['--engine', 'ensemble']);
+  assert.equal(result.status, 2);
+  assert.equal(report.decision.status, 'ABSTAIN');
+  assert.ok(report.decision.reasonCodes.includes('perceptual-signals-disagree'));
+  assert.equal(report.decision.evidence.signalAgreement.band, 'conflict');
+  assert.ok(report.decision.evidence.signalAgreement.axes.x.values.length >= 3);
+  assert.equal(report.recommendation, null);
+});
+
+test('centroid engine remains byte-compatible in behavior and ensemble keeps safety gates first', () => {
+  const centroid = analyze('play.svg', ['--engine', 'centroid']);
+  assert.equal(centroid.result.status, 0, centroid.result.stderr);
+  assert.equal(centroid.report.engine.model, 'alpha-centroid-v1');
+  assert.equal(centroid.report.recommendation.dxPercent, 1.38955);
+  assert.equal(centroid.report.recommendation.dyPercent, -0.000188);
+  assert.equal(centroid.report.measurements.reference.signals, undefined);
+
+  for (const [fixture, reason] of [
+    ['left-dot.svg', 'fix-svg-bounds-first'],
+    ['detached.svg', 'semantic-weight-ambiguous'],
+    ['empty.svg', 'no-painted-content'],
+  ]) {
+    const analyzed = analyze(fixture, ['--engine', 'ensemble']);
+    assert.equal(analyzed.result.status, 2, fixture);
+    assert.equal(analyzed.report.decision.status, 'ABSTAIN');
+    assert.ok(analyzed.report.decision.reasonCodes.includes(reason));
+  }
+});
+
+test('ensemble evidence is source-bound, tamper-evident, and compatible with guarded apply', () => {
+  const { dir, audit, report } = analyze('play.svg', ['--engine', 'ensemble']);
+  const source = join(fixtures, 'play.svg');
+  const approved = approvedVerification(source, audit, dir, 1.3, 0);
+  assert.equal(approved.verified.status, 0, approved.verified.stderr);
+  const output = join(dir, 'play.ensemble.svg');
+  const applied = run('apply-correction.mjs', [source, '--analysis', audit, '--comparison', approved.comparison, '--verification', approved.verification, '--confirm-reviewed', '--output', output]);
+  assert.equal(applied.status, 0, applied.stderr);
+  assert.equal(existsSync(output), true);
+  assert.match(json(approved.verification).candidate.sha256, /^[a-f0-9]{64}$/);
+
+  report.measurements.reference.signals.edge.centroid.x += 1;
+  writeFileSync(audit, `${JSON.stringify(report, null, 2)}\n`);
+  const rejected = run('render-comparison.mjs', [source, '--analysis', audit, '--output', join(dir, 'tampered.svg')]);
+  assert.equal(rejected.status, 2);
+  assert.match(rejected.stderr, /audit decision or measurements were modified/i);
+});
+
 test('binding: render and verify reject a changed source', () => {
   const { dir, audit, result } = analyze('play.svg');
   assert.equal(result.status, 0);
@@ -190,6 +276,8 @@ test('comparison embeds raster evidence and never copies source markup', () => {
   assert.equal(run('render-comparison.mjs', [join(fixtures, 'play.svg'), '--analysis', audit, '--output', output]).status, 0);
   const comparison = readFileSync(output, 'utf8');
   assert.match(comparison, /data:image\/png;base64,/);
+  assert.match(comparison, /OptiAI candidate comparison|CANDIDATE/);
+  assert.doesNotMatch(comparison, /REVIEWED/);
   assert.doesNotMatch(comparison, /M8 5L19 12L8 19Z|<script\b|onload\s*=/i);
   assert.doesNotMatch(comparison, /confidence/i);
 });
