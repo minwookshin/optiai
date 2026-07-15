@@ -4,7 +4,7 @@ Use pairwise judgments to calibrate OptiAI for a narrow visual task. Do not clai
 
 ## v0.6 adaptive collection
 
-The adaptive lab isolates one `size × theme × axis` condition per question. It starts from a uniform ideal-offset grid, updates that posterior after A, B, or Tie, and chooses the remaining pair with the highest information score. `Cannot judge` is retained but does not update the posterior. The exported order is replayed by the CLI; changing an earlier choice, trial ID, index, or response time invalidates later lineage.
+The adaptive lab isolates one `size × theme × axis` condition per question. It starts from a uniform ideal-offset grid, updates that posterior after A, B, or Tie, and chooses the remaining pair with the highest information score. `Cannot judge` is retained but does not update the posterior. The exported order is replayed by the CLI; changing an earlier choice, trial ID, or index invalidates later lineage. Response time is range-checked and digest-bound after export, but it does not affect acquisition order.
 
 The final question repeats the first pair with A/B reversed. This is a small within-rater reliability check, not proof of expertise. Response time is diagnostic metadata, not a quality score. The policy is deterministic for a bound study and seed so the exporter can reproduce it exactly.
 

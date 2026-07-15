@@ -1,4 +1,4 @@
 interface:
   display_name: "OptiAI"
-  short_description: "Audit, label, and calibrate SVG optical alignment"
-  default_prompt: "Use $optiai to audit this SVG, collect response-driven blinded panel evidence when useful, estimate tie-aware calibration, and apply only a verified correction."
+  short_description: "Audit, calibrate, and benchmark SVG optical alignment"
+  default_prompt: "Use $optiai to audit this SVG, collect blinded panel evidence, estimate tie-aware calibration, test learned behavior on a disjoint fixed benchmark, and apply only a verified correction."
