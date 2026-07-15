@@ -157,7 +157,7 @@ export function validateAudit(svg, audit) {
   if (audit?.schemaVersion !== 2 || audit?.tool !== 'OptiAI') fail('Unsupported or invalid audit schema.', 'audit-schema-unsupported', 2);
   if (!audit.source || !/^[a-f0-9]{64}$/.test(audit.source.sha256 ?? '')) fail('Audit source binding is invalid.', 'audit-binding-invalid', 2);
   if (!Array.isArray(audit.targetSizes) || !audit.targetSizes.length || audit.targetSizes.length > 32 || audit.targetSizes.some((size) => !Number.isInteger(size) || size < 1 || size > 512)) fail('Audit target sizes are invalid.', 'audit-sizes-invalid', 2);
-  if (!['centroid', 'none'].includes(audit.engine?.name) || !['icon-only', 'icon-text', 'logo', 'unknown'].includes(audit.context)) fail('Audit request parameters are invalid.', 'audit-request-invalid', 2);
+  if (!['ensemble', 'centroid', 'none'].includes(audit.engine?.name) || !['icon-only', 'icon-text', 'logo', 'unknown'].includes(audit.context)) fail('Audit request parameters are invalid.', 'audit-request-invalid', 2);
   if (audit.source.realpath !== svg.realpath) fail('Audit was created for a different source path.', 'audit-input-path-mismatch', 2);
   if (audit.source.sha256 !== svg.sha256 || audit.source.byteLength !== svg.byteLength) fail('Source bytes changed after the audit.', 'audit-input-hash-mismatch', 2);
   if (audit.source.viewBox?.raw !== svg.viewBox?.raw) fail('Source viewBox changed after the audit.', 'audit-input-viewbox-mismatch', 2);

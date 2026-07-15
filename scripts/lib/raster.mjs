@@ -16,7 +16,105 @@ export function vectorBounds(svg, viewBox) {
   return Object.fromEntries(Object.entries(bounds).map(([key, value]) => [key, formatNumber(value, 6)]));
 }
 
-export function rasterMeasure(svg, viewBox, size) {
+function convexHull(points) {
+  if (points.length <= 1) return points;
+  const ordered = points
+    .map(([x, y]) => [x, y])
+    .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (origin, a, b) => (a[0] - origin[0]) * (b[1] - origin[1]) - (a[1] - origin[1]) * (b[0] - origin[0]);
+  const lower = [];
+  for (const point of ordered) {
+    while (lower.length >= 2 && cross(lower.at(-2), lower.at(-1), point) <= 0) lower.pop();
+    lower.push(point);
+  }
+  const upper = [];
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    const point = ordered[index];
+    while (upper.length >= 2 && cross(upper.at(-2), upper.at(-1), point) <= 0) upper.pop();
+    upper.push(point);
+  }
+  lower.pop();
+  upper.pop();
+  return lower.concat(upper);
+}
+
+function polygonCentroid(points) {
+  if (points.length < 3) return null;
+  let twiceArea = 0;
+  let weightedX = 0;
+  let weightedY = 0;
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index];
+    const next = points[(index + 1) % points.length];
+    const cross = current[0] * next[1] - next[0] * current[1];
+    twiceArea += cross;
+    weightedX += (current[0] + next[0]) * cross;
+    weightedY += (current[1] + next[1]) * cross;
+  }
+  if (Math.abs(twiceArea) < 1e-9) return null;
+  return [weightedX / (3 * twiceArea), weightedY / (3 * twiceArea)];
+}
+
+function symmetryAxis(profile) {
+  const total = profile.reduce((sum, value) => sum + value, 0);
+  if (!total) return null;
+  let bestAxis2 = profile.length;
+  let bestError = Infinity;
+  for (let axis2 = 1; axis2 < profile.length * 2; axis2 += 1) {
+    let error = 0;
+    for (let index = 0; index < profile.length; index += 1) {
+      const mirror = axis2 - index - 1;
+      error += Math.abs(profile[index] - (mirror >= 0 && mirror < profile.length ? profile[mirror] : 0));
+    }
+    if (error < bestError - 1e-9 || (Math.abs(error - bestError) <= 1e-9 && Math.abs(axis2 - profile.length) < Math.abs(bestAxis2 - profile.length))) {
+      bestError = error;
+      bestAxis2 = axis2;
+    }
+  }
+  return { pixel: bestAxis2 / 2, score: formatNumber(Math.max(0, 1 - bestError / (2 * total)), 6) };
+}
+
+function rasterSignals(pixels, width, height, viewBox) {
+  const columnAlpha = new Float64Array(width);
+  const rowAlpha = new Float64Array(height);
+  const boundary = [];
+  let edgeSum = 0;
+  let edgeX = 0;
+  let edgeY = 0;
+  const alphaAt = (x, y) => (x < 0 || x >= width || y < 0 || y >= height ? 0 : pixels[(y * width + x) * 4 + 3]);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const alpha = alphaAt(x, y);
+      if (alpha <= 1) continue;
+      columnAlpha[x] += alpha;
+      rowAlpha[y] += alpha;
+      const neighbors = [alphaAt(x - 1, y), alphaAt(x + 1, y), alphaAt(x, y - 1), alphaAt(x, y + 1)];
+      const edgeWeight = neighbors.reduce((sum, neighbor) => sum + Math.abs(alpha - neighbor), 0);
+      if (edgeWeight > 0) {
+        edgeSum += edgeWeight;
+        edgeX += (x + 0.5) * edgeWeight;
+        edgeY += (y + 0.5) * edgeWeight;
+      }
+      if (neighbors.some((neighbor) => neighbor <= 1)) boundary.push([x + 0.5, y + 0.5]);
+    }
+  }
+  const scaleX = viewBox.width / width;
+  const scaleY = viewBox.height / height;
+  const toViewBox = ([x, y]) => ({ x: formatNumber(viewBox.x + x * scaleX, 6), y: formatNumber(viewBox.y + y * scaleY, 6) });
+  const hullCenter = polygonCentroid(convexHull(boundary));
+  const horizontalSymmetry = symmetryAxis(columnAlpha);
+  const verticalSymmetry = symmetryAxis(rowAlpha);
+  return {
+    edge: { centroid: edgeSum ? toViewBox([edgeX / edgeSum, edgeY / edgeSum]) : null },
+    convexHull: { centroid: hullCenter ? toViewBox(hullCenter) : null },
+    symmetry: {
+      axis: horizontalSymmetry && verticalSymmetry ? toViewBox([horizontalSymmetry.pixel, verticalSymmetry.pixel]) : null,
+      score: { x: horizontalSymmetry?.score ?? 0, y: verticalSymmetry?.score ?? 0 },
+    },
+  };
+}
+
+export function rasterMeasure(svg, viewBox, size, options = {}) {
   const image = renderer(svg, size).render();
   const pixels = image.pixels;
   let minX = image.width;
@@ -57,7 +155,7 @@ export function rasterMeasure(svg, viewBox, size) {
   if (maxX === image.width - 1) touches.push('right');
   if (minY === 0) touches.push('top');
   if (maxY === image.height - 1) touches.push('bottom');
-  return {
+  const measurement = {
     size,
     paintedBounds,
     alphaSum,
@@ -68,6 +166,13 @@ export function rasterMeasure(svg, viewBox, size) {
     },
     touches,
   };
+  if (options.signals) {
+    measurement.signals = {
+      alpha: { centroid: measurement.centroid },
+      ...rasterSignals(pixels, image.width, image.height, viewBox),
+    };
+  }
+  return measurement;
 }
 
 export function rasterPng(svg, size) {
@@ -106,18 +211,20 @@ export function connectedComponentCount(svg, size = 128) {
   return components;
 }
 
-export function measureSvg(svg, viewBox, sizes) {
+export function measureSvg(svg, viewBox, sizes, options = {}) {
   const referenceSize = Math.min(1024, Math.max(512, Math.round(viewBox.width * 32)));
-  const reference = rasterMeasure(svg, viewBox, referenceSize);
+  const reference = rasterMeasure(svg, viewBox, referenceSize, options);
   const paintedBounds = reference.paintedBounds;
-  if (!paintedBounds || !reference.paintedBounds) return { reference: { paintedBounds: null, sideBearings: null, centroid: null }, bySize: sizes.map((size) => rasterMeasure(svg, viewBox, size)) };
+  if (!paintedBounds || !reference.paintedBounds) return { reference: { paintedBounds: null, sideBearings: null, centroid: null }, bySize: sizes.map((size) => rasterMeasure(svg, viewBox, size, options)) };
   const sideBearings = {
     left: formatNumber(paintedBounds.x - viewBox.x, 6),
     right: formatNumber(viewBox.x + viewBox.width - paintedBounds.maxX, 6),
     top: formatNumber(paintedBounds.y - viewBox.y, 6),
     bottom: formatNumber(viewBox.y + viewBox.height - paintedBounds.maxY, 6),
   };
-  return { reference: { paintedBounds, sideBearings, centroid: reference.centroid, alphaSum: reference.alphaSum, connectedComponents: connectedComponentCount(svg) }, bySize: sizes.map((size) => rasterMeasure(svg, viewBox, size)) };
+  const referenceMeasurement = { paintedBounds, sideBearings, centroid: reference.centroid, alphaSum: reference.alphaSum, connectedComponents: connectedComponentCount(svg) };
+  if (options.signals) referenceMeasurement.signals = reference.signals;
+  return { reference: referenceMeasurement, bySize: sizes.map((size) => rasterMeasure(svg, viewBox, size, options)) };
 }
 
 export function clippingIssues(sourceSvg, sourceViewBox, candidateSvg, candidateViewBox, sizes) {

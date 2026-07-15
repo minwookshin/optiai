@@ -16,6 +16,12 @@ Evaluate several signals instead of relying on a single centroid:
 
 Psychophysical research indicates that perceived centers depend strongly on boundary contour, not only luminance or filled area. Treat the final judgment as perceptual and context-dependent.
 
+## v0.5 ensemble interpretation
+
+Treat alpha, edge, convex-hull, and symmetry measurements as fallible signals rather than votes with equal authority. Alpha and convex hull are structural anchors. Edge centroids are sensitive to antialiasing and may be an outlier at small sizes. Include a symmetry axis only when its raster mirror score is strong. Use the median proposal, disclose isolated edge disagreement, and abstain when the structural signals disagree by more than the bounded experimental threshold.
+
+Use the high-resolution reference raster to propose a correction. Use production-size rasters to expose instability, not to hide pixel-grid aliasing behind an average. Keep `mixed` evidence review-only and treat `perceptual-signals-disagree` as a successful safety outcome.
+
 ## Common corrections
 
 - Shift right-facing play triangles slightly toward the point.

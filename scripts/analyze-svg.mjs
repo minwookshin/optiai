@@ -7,7 +7,7 @@ import { assertKnownArgs, guardOutput, handleCliError, parseArgs, parseSizes, wr
 const HELP = `Usage: analyze-svg.mjs <input.svg> [options]
 
 Options:
-  --engine centroid|none  Transparent alpha-centroid model (default: centroid)
+  --engine ensemble|centroid|none  Optical engine (default: centroid)
   --context TYPE          icon-only, icon-text, logo, or unknown
   --sizes LIST            Comma-separated target sizes
   --rtl                   Mirror the horizontal proposal
@@ -31,7 +31,7 @@ try {
   const input = args._[0];
   if (!input) throw new Error('Provide an input SVG.');
   const engine = args.engine ?? 'centroid';
-  if (!['centroid', 'none'].includes(engine)) throw new Error(`Unsupported engine: ${engine}`);
+  if (!['ensemble', 'centroid', 'none'].includes(engine)) throw new Error(`Unsupported engine: ${engine}`);
   const context = args.context ?? 'unknown';
   if (!['icon-only', 'icon-text', 'logo', 'unknown'].includes(context)) throw new Error(`Unsupported context: ${context}`);
   const sizes = parseSizes(args.sizes);
@@ -63,7 +63,7 @@ try {
     decision,
     recommendation,
     derivedSha256: derivedDigest(derived),
-    engine: { name: engine, model: engine === 'centroid' ? 'alpha-centroid-v1' : null, networkAccess: false },
+    engine: { name: engine, model: engine === 'ensemble' ? 'multi-signal-raster-v1' : engine === 'centroid' ? 'alpha-centroid-v1' : null, networkAccess: false },
   };
   const inferred = args.output && extname(String(args.output)).toLowerCase() === '.md' ? 'markdown' : 'json';
   const format = args.format ?? inferred;

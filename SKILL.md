@@ -46,12 +46,13 @@ Check CSS/Auto Layout, wrapper padding, viewBox padding, hidden or detached geom
 
 ```bash
 node "$SKILL_DIR/scripts/analyze-svg.mjs" icon.svg \
+  --engine ensemble \
   --context icon-only \
   --sizes 16,20,24,32,48 \
   --output optiai-audit.json
 ```
 
-The audit uses a local alpha-centroid proposal as experimental evidence, not perceptual truth. It records actual painted bounds, side bearings, per-size rasters, source binding, and either `REVIEW`, `NO_CHANGE`, or `ABSTAIN`. Stop when it abstains.
+The v0.5 ensemble measures alpha mass, edge distribution, convex-hull center, and reliable symmetry axes. It uses their median as experimental evidence, records agreement and per-size stability, and returns `ABSTAIN` when structural signals materially disagree. It never uses a universal vertical bias. Omit `--engine ensemble` only when reproducing the legacy `alpha-centroid-v1` baseline. The audit records actual painted bounds, side bearings, per-size rasters, source binding, and either `REVIEW`, `NO_CHANGE`, or `ABSTAIN`. Stop when it abstains.
 
 ### 4. Optionally collect blinded preference evidence
 
@@ -147,6 +148,6 @@ The apply step revalidates the audit, comparison, per-axis review, candidate, an
 
 ### 10. Report the decision
 
-Return the diagnosed category, painted bounds and side bearings, reviewed offsets in percent and pixels, decision/reason codes, comparison path, verification status, output path, and remaining manual-review limits. When a Preference Lab was used, also report the study ID, response count, Tie/ABSTAIN counts, and JSONL path. For calibration, report family/group counts, eligible pairs, agreement, out-of-fold baseline comparison, and the research-only status. Do not report a correction confidence score.
+Return the diagnosed category, painted bounds and side bearings, reviewed offsets in percent and pixels, signal-agreement band and disagreements, decision/reason codes, comparison path, verification status, output path, and remaining manual-review limits. When a Preference Lab was used, also report the study ID, response count, Tie/ABSTAIN counts, and JSONL path. For calibration, report family/group counts, eligible pairs, agreement, out-of-fold baseline comparison, and the research-only status. Do not report a correction confidence score.
 
 Read `references/optical-alignment-principles.md` when explaining a difficult perceptual decision.
