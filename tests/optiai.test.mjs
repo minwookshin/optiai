@@ -366,6 +366,9 @@ test('preference lab: exports complete responses as deterministic training JSONL
   assert.equal(exported.status, 0, exported.stderr);
   const lines = readFileSync(output, 'utf8').trim().split('\n').map(JSON.parse);
   assert.equal(lines.length, studyReport.trials.length);
+  assert.ok(lines.every((line) => line.schemaVersion === 2 && line.nonAuthorizing === true));
+  assert.ok(lines.every((line) => /^[a-f0-9]{64}$/.test(line.datumDigest) && /^[a-f0-9]{64}$/.test(line.studyDigest)));
+  assert.ok(lines.every((line) => Number.isFinite(line.sourceFeatures?.proposalPercent)));
   assert.ok(lines.every((line) => line.studyId === studyReport.studyId && line.raterId === 'expert-01'));
   assert.ok(lines.every((line) => ['A', 'B', 'TIE', 'ABSTAIN'].includes(line.choice)));
   assert.ok(lines.filter((line) => line.choice === 'A' || line.choice === 'B').every((line) => /^[a-f0-9]{64}$/.test(line.preferredCandidateId)));
@@ -377,6 +380,14 @@ test('preference lab: exports complete responses as deterministic training JSONL
   writeFileSync(reorderedResponse, JSON.stringify(responseDocument));
   assert.equal(run('export-preferences.mjs', [join(fixtures, 'play.svg'), '--analysis', join(dir, 'audit.json'), '--study', study, reorderedResponse, '--output', second]).status, 0);
   assert.equal(readFileSync(second, 'utf8'), readFileSync(output, 'utf8'));
+
+  const caseVariant = join(dir, 'EXPERT-01.json');
+  responseDocument.raterId = 'EXPERT-01';
+  writeFileSync(caseVariant, JSON.stringify(responseDocument));
+  const duplicateOutput = join(dir, 'duplicate-rater.jsonl');
+  const duplicate = run('export-preferences.mjs', [join(fixtures, 'play.svg'), '--analysis', join(dir, 'audit.json'), '--study', study, response, caseVariant, '--output', duplicateOutput]);
+  assert.equal(duplicate.status, 2);
+  assert.equal(existsSync(duplicateOutput), false);
 });
 
 test('preference lab: rejects incomplete, duplicate, and unknown responses', () => {

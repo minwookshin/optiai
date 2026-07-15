@@ -2,6 +2,7 @@ import { validateDerivedAudit } from './audit-model.mjs';
 import { clippingIssues, rasterPng } from './raster.mjs';
 import { buildCandidate, sha256, validateAudit, withRootColor } from './svg-document.mjs';
 import { fail, formatNumber } from './svg-utils.mjs';
+import { auditSourceFeatures, finalizePreferenceDatum } from './preference-model.mjs';
 
 const STUDY_TOOL = 'OptiAI Preference Lab';
 const RESPONSE_TOOL = 'OptiAI Preference Response';
@@ -225,8 +226,9 @@ export function validatePreferenceResponse(study, response) {
   return study.trials.map((trial) => ({ trialId: trial.id, choice: answers.get(trial.id) }));
 }
 
-export function preferenceRows(study, response) {
+export function preferenceRows(study, response, audit) {
   const answers = validatePreferenceResponse(study, response);
+  if (!audit) fail('A bound audit is required to export training features.', 'preference-audit-required', 2);
   const candidates = new Map(study.candidates.map((candidate) => [candidate.id, candidate]));
   const trials = new Map(study.trials.map((trial) => [trial.id, trial]));
   return answers.map(({ trialId, choice }) => {
@@ -234,11 +236,12 @@ export function preferenceRows(study, response) {
     const candidateA = candidates.get(trial.presentation.A);
     const candidateB = candidates.get(trial.presentation.B);
     const preferredCandidateId = choice === 'A' ? candidateA.id : choice === 'B' ? candidateB.id : null;
-    return {
-      schemaVersion: 1,
+    return finalizePreferenceDatum({
+      schemaVersion: 2,
       tool: DATUM_TOOL,
       nonAuthorizing: true,
       studyId: study.studyId,
+      studyDigest: study.studyDigest,
       sourceSha256: study.source.sha256,
       sourceViewBox: study.source.viewBox.raw,
       context: study.context,
@@ -255,6 +258,7 @@ export function preferenceRows(study, response) {
       tie: choice === 'TIE',
       abstain: choice === 'ABSTAIN',
       pairwiseWinnerEligible: choice === 'A' || choice === 'B',
-    };
+      sourceFeatures: auditSourceFeatures(audit, trial.axis),
+    });
   });
 }
