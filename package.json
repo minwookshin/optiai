@@ -1,0 +1,17 @@
+{
+  "name": "optiai",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "check": "for file in scripts/*.mjs scripts/lib/*.mjs tests/*.mjs; do node --check \"$file\" || exit 1; done",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@resvg/resvg-js": "2.6.2",
+    "@xmldom/xmldom": "0.9.10"
+  }
+}

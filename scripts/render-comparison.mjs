@@ -1,114 +1,54 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import {
-  escapeXml,
-  fail,
-  getRecommendation,
-  parseArgs,
-  parseCsv,
-  parseSizes,
-  readJson,
-  readSvg,
-  writeOutput,
-} from './lib/svg-utils.mjs';
+import { validateDerivedAudit } from './lib/audit-model.mjs';
+import { assertKnownArgs, escapeXml, guardOutput, handleCliError, parseArgs, parseCorrection, parseCsv, parseSizes, readJson, writeOutput, fail } from './lib/svg-utils.mjs';
+import { buildCandidate, loadSvg, validateAudit, withRootColor } from './lib/svg-document.mjs';
+import { rasterPng } from './lib/raster.mjs';
 
 const HELP = `Usage: render-comparison.mjs <input.svg> --analysis audit.json [options]
 
 Options:
-  --sizes LIST         Comma-separated sizes (default: analysis sizes)
-  --themes LIST        light,dark (default: light,dark)
-  --dx-percent NUMBER  Override the horizontal engine proposal
-  --dy-percent NUMBER  Override the vertical engine proposal
-  --output PATH        Output SVG path (default: stdout)
+  --sizes LIST         Comma-separated target sizes
+  --themes LIST        light,dark (default: both)
+  --dx-percent NUMBER  Reviewed horizontal value
+  --dy-percent NUMBER  Reviewed vertical value
+  --output PATH        Output comparison SVG
   --help               Show this help
 `;
 
-const args = parseArgs(process.argv.slice(2));
-if (args.help) {
-  process.stdout.write(HELP);
-  process.exit(0);
-}
-const input = args._[0];
-if (!input) fail('Provide an input SVG.');
-if (!args.analysis || args.analysis === true) fail('Provide --analysis audit.json.');
-
-const svg = readSvg(input);
-const analysis = readJson(args.analysis);
-const engineRecommendation = getRecommendation(analysis);
-const parseOverride = (key, fallback) => {
-  if (args[key] === undefined) return fallback;
-  const value = Number(args[key]);
-  if (!Number.isFinite(value)) fail(`--${key} must be a finite number.`);
-  return value;
-};
-const recommendation = {
-  ...engineRecommendation,
-  dxPercent: parseOverride('dx-percent', engineRecommendation.dxPercent),
-  dyPercent: parseOverride('dy-percent', engineRecommendation.dyPercent),
-};
-const sizes = parseSizes(args.sizes, analysis.targetSizes ?? [16, 20, 24, 32, 48]);
-const themes = parseCsv(args.themes, ['light', 'dark']);
-if (sizes.length === 0) fail('Provide at least one positive size.');
-if (themes.some((theme) => !['light', 'dark'].includes(theme))) fail('Themes must be light and/or dark.');
-
-const width = 1040;
-const headerHeight = 112;
-const themeHeaderHeight = 34;
-const rowHeight = 82;
-const footerHeight = 36;
-const height = headerHeight + themes.length * (themeHeaderHeight + sizes.length * rowHeight) + footerHeight;
-const columns = [40, 370, 700];
-const cellWidth = 300;
-const content = [];
-
-content.push(`
-  <g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
-    <text x="40" y="42" fill="#f5f7fa" font-size="24" font-weight="700">OptiAI optical alignment comparison</text>
-    <text x="40" y="68" fill="#9aa4b2" font-size="13">${escapeXml(svg.filename)} · dx ${recommendation.dxPercent.toFixed(4)}% · dy ${recommendation.dyPercent.toFixed(4)}% · confidence ${escapeXml(recommendation.confidence)}</text>
-    <text x="${columns[0]}" y="100" fill="#d5d9e0" font-size="14" font-weight="600">Source</text>
-    <text x="${columns[1]}" y="100" fill="#d5d9e0" font-size="14" font-weight="600">Geometric guides</text>
-    <text x="${columns[2]}" y="100" fill="#d5d9e0" font-size="14" font-weight="600">OptiAI proposal</text>
-  </g>`);
-content.push(`<defs><g id="optiai-artwork">${svg.innerMarkup}</g></defs>`);
-
-let y = headerHeight;
-for (const theme of themes) {
-  const palette = theme === 'dark'
-    ? { background: '#171b22', border: '#303746', label: '#c8d0dc', guide: '#7a8699', pattern: 'url(#optiai-grid-dark)', color: '#ffffff' }
-    : { background: '#f7f8fa', border: '#d7dce3', label: '#3d4653', guide: '#8792a2', pattern: 'url(#optiai-grid-light)', color: '#111318' };
-  content.push(`<rect x="24" y="${y}" width="992" height="${themeHeaderHeight + sizes.length * rowHeight}" rx="12" fill="#12151b" stroke="#2b313d"/>`);
-  content.push(`<text x="40" y="${y + 23}" fill="#aeb7c5" font-family="ui-sans-serif, -apple-system, sans-serif" font-size="12" font-weight="700" letter-spacing="1">${theme.toUpperCase()}</text>`);
-  y += themeHeaderHeight;
-
-  for (const size of sizes) {
-    const cellY = y + 7;
-    for (let column = 0; column < columns.length; column += 1) {
-      const x = columns[column];
-      content.push(`<rect x="${x}" y="${cellY}" width="${cellWidth}" height="68" rx="10" fill="${palette.background}" stroke="${palette.border}"/>`);
-      if (column > 0) content.push(`<rect x="${x}" y="${cellY}" width="${cellWidth}" height="68" rx="10" fill="${palette.pattern}" opacity="0.55"/>`);
-      const iconX = x + 132;
-      const iconY = cellY + (68 - size) / 2;
-      const centerX = iconX + size / 2;
-      const centerY = iconY + size / 2;
-      if (column > 0) {
-        content.push(`<path d="M${centerX} ${cellY + 8}V${cellY + 60}M${x + 106} ${centerY}H${x + 194}" stroke="${palette.guide}" stroke-width="0.75" stroke-dasharray="3 3"/>`);
-      }
-      const dxUnits = column === 2 ? (recommendation.dxPercent / 100) * svg.viewBox.width : 0;
-      const dyUnits = column === 2 ? (recommendation.dyPercent / 100) * svg.viewBox.height : 0;
-      content.push(`<svg x="${iconX}" y="${iconY}" width="${size}" height="${size}" viewBox="${escapeXml(svg.viewBox.raw)}" overflow="visible" style="color:${palette.color}"><use href="#optiai-artwork" transform="translate(${dxUnits} ${dyUnits})"/></svg>`);
-      content.push(`<text x="${x + 12}" y="${cellY + 39}" fill="${palette.label}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11">${size}px</text>`);
+try {
+  const args = parseArgs(process.argv.slice(2));
+  assertKnownArgs(args, ['help', 'analysis', 'sizes', 'themes', 'dx-percent', 'dy-percent', 'output']);
+  if (args.help) { process.stdout.write(HELP); process.exit(0); }
+  if (!args._[0]) fail('Provide an input SVG.');
+  if (!args.analysis || args.analysis === true) fail('Provide --analysis audit.json.');
+  const svg = loadSvg(args._[0]);
+  guardOutput(svg.realpath, args.output);
+  guardOutput(args.analysis, args.output);
+  const audit = readJson(args.analysis);
+  validateAudit(svg, audit);
+  validateDerivedAudit(svg, audit);
+  if (audit.decision?.status === 'ABSTAIN') fail('The audit abstained; there is no safe proposal to compare.', 'audit-abstained', 2);
+  const correction = parseCorrection(args, audit.recommendation);
+  const candidate = buildCandidate(svg, correction);
+  const sizes = parseSizes(args.sizes, audit.targetSizes);
+  const themes = parseCsv(args.themes, ['light', 'dark']);
+  if (!themes.length || themes.some((theme) => !['light', 'dark'].includes(theme))) fail('Themes must be light and/or dark.');
+  const rows = [];
+  let y = 92;
+  for (const theme of themes) {
+    const background = theme === 'dark' ? '#11151b' : '#fff';
+    const foreground = theme === 'dark' ? '#fff' : '#111';
+    rows.push(`<text x="32" y="${y + 18}" fill="#9ca6b5" font-family="sans-serif" font-size="11" font-weight="700">${theme.toUpperCase()}</text>`);
+    y += 28;
+    for (const size of sizes) {
+      const sourcePng = rasterPng(withRootColor(svg.sanitized, foreground), size).toString('base64');
+      const candidatePng = rasterPng(withRootColor(candidate.bytes, foreground), size).toString('base64');
+      rows.push(`<text x="32" y="${y + 27}" fill="#c7ced9" font-family="monospace" font-size="12">${size}px</text>`);
+      rows.push(`<rect x="100" y="${y}" width="180" height="54" rx="8" fill="${background}"/><image x="${190 - size / 2}" y="${y + 27 - size / 2}" width="${size}" height="${size}" href="data:image/png;base64,${sourcePng}"/>`);
+      rows.push(`<rect x="310" y="${y}" width="180" height="54" rx="8" fill="${background}"/><path d="M400 ${y + 5}V${y + 49}M378 ${y + 27}H422" stroke="#7f8998" stroke-dasharray="3 3"/><image x="${400 - size / 2}" y="${y + 27 - size / 2}" width="${size}" height="${size}" href="data:image/png;base64,${candidatePng}"/>`);
+      y += 68;
     }
-    y += rowHeight;
   }
-}
-
-content.push(`<text x="40" y="${height - 16}" fill="#788394" font-family="ui-sans-serif, -apple-system, sans-serif" font-size="11">Algorithmic output is a proposal. Review the rasterized result before changing brand or production assets.</text>`);
-
-const templatePath = fileURLToPath(new URL('../assets/comparison-template.svg', import.meta.url));
-const template = readFileSync(templatePath, 'utf8');
-const rendered = template
-  .replaceAll('{{WIDTH}}', String(width))
-  .replaceAll('{{HEIGHT}}', String(height))
-  .replace('{{CONTENT}}', content.join('\n'));
-writeOutput(args.output, rendered);
+  const output = `<svg xmlns="http://www.w3.org/2000/svg" width="522" height="${y + 24}" viewBox="0 0 522 ${y + 24}" data-optiai-source-sha256="${svg.sha256}" data-optiai-candidate-sha256="${candidate.sha256}" data-optiai-sizes="${sizes.join(',')}" data-optiai-themes="${themes.join(',')}"><rect width="100%" height="100%" fill="#171b22"/><text x="32" y="34" fill="#fff" font-family="sans-serif" font-size="20" font-weight="700">OptiAI reviewed comparison</text><text x="32" y="58" fill="#9ca6b5" font-family="sans-serif" font-size="12">${escapeXml(svg.filename)} · dx ${correction.dxPercent}% · dy ${correction.dyPercent}% · evidence experimental</text><text x="160" y="82" fill="#c7ced9" font-family="sans-serif" font-size="12">SOURCE</text><text x="362" y="82" fill="#c7ced9" font-family="sans-serif" font-size="12">REVIEWED</text>${rows.join('')}</svg>\n`;
+  writeOutput(args.output, output);
+} catch (error) { handleCliError(error); }

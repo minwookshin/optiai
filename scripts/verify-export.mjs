@@ -1,85 +1,89 @@
 #!/usr/bin/env node
-import { extname } from 'node:path';
-import { fail, parseArgs, readJson, readSvg, writeOutput } from './lib/svg-utils.mjs';
+import { readFileSync } from 'node:fs';
+import { validateDerivedAudit } from './lib/audit-model.mjs';
+import { sha256, buildCandidate, loadSvg, validateAudit } from './lib/svg-document.mjs';
+import { clippingIssues } from './lib/raster.mjs';
+import { assertKnownArgs, fail, guardOutput, handleCliError, parseArgs, parseCorrection, readJson, writeOutput } from './lib/svg-utils.mjs';
 
-const HELP = `Usage: verify-export.mjs <input.svg> [options]
+const HELP = `Usage: verify-export.mjs <input.svg> --analysis audit.json [options]
 
 Options:
-  --analysis PATH         Include an OptiAI analysis JSON
-  --format json|markdown  Output format
-  --output PATH           Write the result to a file
-  --help                  Show this help
+  --dx-percent NUMBER  Reviewed horizontal correction
+  --dy-percent NUMBER  Reviewed vertical correction
+  --approve            Record explicit human review of both axes
+  --comparison PATH    Bound comparison artifact reviewed before approval
+  --reason-x TEXT      Optional horizontal review rationale
+  --reason-y TEXT      Optional vertical review rationale
+  --output PATH        Write verification JSON
+  --help               Show this help
 `;
 
-const args = parseArgs(process.argv.slice(2));
-if (args.help) {
-  process.stdout.write(HELP);
-  process.exit(0);
-}
-const input = args._[0];
-if (!input) fail('Provide an input SVG.');
-const svg = readSvg(input);
-const analysis = args.analysis && args.analysis !== true ? readJson(args.analysis) : null;
-const issues = [];
-const add = (severity, code, message) => issues.push({ severity, code, message });
-
-if (!svg.viewBox) add('fail', 'missing-viewbox', 'The root SVG has no valid viewBox.');
-if (svg.attributes.width && svg.attributes.height && svg.viewBox) {
-  const width = Number.parseFloat(svg.attributes.width);
-  const height = Number.parseFloat(svg.attributes.height);
-  if (Number.isFinite(width) && Number.isFinite(height)) {
-    const viewportRatio = width / height;
-    const viewBoxRatio = svg.viewBox.width / svg.viewBox.height;
-    if (Math.abs(viewportRatio - viewBoxRatio) > 0.01) add('warn', 'aspect-ratio-mismatch', 'Root width/height and viewBox use different aspect ratios.');
-  }
-}
-if (svg.features.masks) add('warn', 'masks', `${svg.features.masks} mask element(s) require visual export review.`);
-if (svg.features.clipPaths) add('warn', 'clip-paths', `${svg.features.clipPaths} clipPath element(s) may hide corrected artwork.`);
-if (svg.features.filters) add('warn', 'filters', `${svg.features.filters} filter element(s) can extend outside the geometric bounds.`);
-if (svg.features.hasStroke) add('warn', 'stroke-overflow', 'Strokes may extend beyond the viewBox after tightening or shifting it.');
-if (svg.features.hasExternalReference) add('warn', 'external-reference', 'External or data references can render differently after handoff.');
-if (svg.features.hasTransparentFiller) add('warn', 'transparent-filler', 'Fully transparent filler geometry may be removed by design-tool export.');
-if (svg.features.hasLowOpacityFiller) add('warn', 'low-opacity-filler', 'Low-opacity filler geometry may affect bounds, compositing, or hit testing.');
-if (svg.features.hasNonScalingStroke) add('warn', 'non-scaling-stroke', 'Non-scaling strokes need inspection at each production size.');
-if (/\boverflow\s*=\s*["']hidden["']/i.test(svg.rootTag)) add('warn', 'root-overflow-hidden', 'Root overflow is hidden and can clip strokes or filters.');
-
-if (analysis?.engine?.error) add('warn', 'engine-error', `Correction engine error: ${analysis.engine.error}`);
-if (analysis?.recommendation?.clipDetectedByEngine) add('fail', 'engine-clipping', 'The correction engine detected clipping in the proposed viewBox.');
-if (analysis?.recommendation) {
-  const magnitude = Math.hypot(analysis.recommendation.dxPercent, analysis.recommendation.dyPercent);
-  if (magnitude > 5) add('warn', 'large-correction', 'The proposed correction exceeds 5% and likely indicates a bounds or semantic-weight problem.');
-  if (analysis.context === 'logo') add('warn', 'brand-review', 'Logo corrections require explicit brand-owner approval.');
-}
-
-const failures = issues.filter((issue) => issue.severity === 'fail').length;
-const warnings = issues.filter((issue) => issue.severity === 'warn').length;
-const report = {
-  schemaVersion: 1,
-  tool: 'OptiAI',
-  input: svg.absolutePath,
-  status: failures ? 'fail' : warnings ? 'review' : 'pass',
-  summary: { failures, warnings },
-  issues,
-};
-
-function markdown(audit) {
-  const lines = [
-    '# OptiAI export verification',
-    '',
-    `- Input: \`${audit.input}\``,
-    `- Status: \`${audit.status}\``,
-    `- Failures: ${audit.summary.failures}`,
-    `- Warnings: ${audit.summary.warnings}`,
-    '',
-    '## Findings',
-    '',
-    ...(audit.issues.length ? audit.issues.map((issue) => `- **${issue.severity.toUpperCase()} · ${issue.code}**: ${issue.message}`) : ['- No structural export risks detected.']),
-  ];
-  return `${lines.join('\n')}\n`;
-}
-
-const inferredFormat = args.output && extname(String(args.output)).toLowerCase() === '.md' ? 'markdown' : 'json';
-const format = args.format ?? inferredFormat;
-if (!['json', 'markdown'].includes(format)) fail(`Unsupported format: ${format}`);
-writeOutput(args.output, format === 'markdown' ? markdown(report) : `${JSON.stringify(report, null, 2)}\n`);
-if (failures) process.exitCode = 2;
+try {
+  const args = parseArgs(process.argv.slice(2));
+  assertKnownArgs(args, ['help', 'analysis', 'dx-percent', 'dy-percent', 'approve', 'comparison', 'reason-x', 'reason-y', 'output']);
+  if (args.help) { process.stdout.write(HELP); process.exit(0); }
+  if (!args._[0]) fail('Provide an input SVG.');
+  if (!args.analysis || args.analysis === true) fail('Provide --analysis audit.json.');
+  const svg = loadSvg(args._[0]);
+  guardOutput(svg.realpath, args.output);
+  guardOutput(args.analysis, args.output);
+  if (args.comparison && args.comparison !== true) guardOutput(args.comparison, args.output);
+  const audit = readJson(args.analysis);
+  validateAudit(svg, audit);
+  validateDerivedAudit(svg, audit);
+  if (audit.decision?.status === 'ABSTAIN') fail('The audit abstained; verification is blocked.', 'audit-abstained', 2);
+  const correction = parseCorrection(args, audit.recommendation);
+  const candidate = buildCandidate(svg, correction);
+  const clipping = clippingIssues(svg.sanitized, svg.viewBox, candidate.bytes, candidate.viewBox, audit.targetSizes);
+  const issues = [];
+  if (clipping.clipped) issues.push({ severity: 'fail', code: 'post-correction-clipping', sides: clipping.sides, message: 'The reviewed correction removes painted content from the viewport.' });
+  if (Math.abs(correction.dxPercent) > 5 || Math.abs(correction.dyPercent) > 5) issues.push({ severity: 'fail', code: 'correction-out-of-range', message: 'Reviewed corrections are limited to ±5% per axis; repair bounds or abstain instead.' });
+  let comparison = null;
+  if (args.approve) {
+    if (!args.comparison || args.comparison === true) issues.push({ severity: 'block', code: 'comparison-required', message: 'Approval requires the exact comparison artifact.' });
+    else {
+      const bytes = readFileSync(String(args.comparison));
+      const content = bytes.toString('utf8');
+      const bound = content.includes(`data-optiai-source-sha256="${svg.sha256}"`)
+        && content.includes(`data-optiai-candidate-sha256="${candidate.sha256}"`)
+        && content.includes(`data-optiai-sizes="${audit.targetSizes.join(',')}"`)
+        && content.includes('data-optiai-themes="light,dark"');
+      comparison = { path: String(args.comparison), sha256: sha256(bytes), byteLength: bytes.length, bound };
+      if (!bound) issues.push({ severity: 'fail', code: 'comparison-binding-mismatch', message: 'Comparison artifact does not match this source and candidate.' });
+    }
+  } else issues.push({ severity: 'block', code: 'review-approval-required', message: 'Pass --approve only after reviewing both axes in the comparison artifact.' });
+  const hasFailure = issues.some((issue) => issue.severity === 'fail');
+  const hasBlock = issues.some((issue) => issue.severity === 'block');
+  const status = hasFailure ? 'FAIL' : hasBlock ? 'REVIEW_REQUIRED' : 'PASS';
+  const axisReview = (axis, proposed, final) => ({
+    action: Math.abs(final) < 1e-9 ? 'ZERO' : Math.abs(final - proposed) < 1e-9 ? 'ACCEPT_PROPOSAL' : 'OVERRIDE',
+    proposedPercent: proposed,
+    finalPercent: final,
+    reason: args[`reason-${axis}`] ?? (Math.abs(final) < 1e-9 ? 'axis-zeroed-after-visual-review' : Math.abs(final - proposed) < 1e-9 ? 'proposal-accepted-after-visual-review' : 'value-overridden-after-visual-review'),
+  });
+  const auditDocumentSha256 = sha256(JSON.stringify(audit));
+  const review = {
+    approved: Boolean(args.approve) && status === 'PASS',
+    comparison,
+    axes: { x: axisReview('x', audit.recommendation?.dxPercent ?? 0, correction.dxPercent), y: axisReview('y', audit.recommendation?.dyPercent ?? 0, correction.dyPercent) },
+  };
+  const reviewDigest = sha256(JSON.stringify(review));
+  const correctionDigest = sha256(JSON.stringify({ sourceSha256: svg.sha256, auditDocumentSha256, reviewDigest, correction, candidateSha256: candidate.sha256 }));
+  const report = {
+    schemaVersion: 2,
+    tool: 'OptiAI Verification',
+    status,
+    source: { realpath: svg.realpath, sha256: svg.sha256, byteLength: svg.byteLength, viewBox: svg.viewBox },
+    audit: { documentSha256: auditDocumentSha256, derivedSha256: audit.derivedSha256, sourceSha256: audit.source.sha256 },
+    approved: review.approved,
+    review,
+    reviewDigest,
+    correction,
+    correctionDigest,
+    candidate: { sha256: candidate.sha256, viewBox: candidate.viewBox, byteLength: Buffer.byteLength(candidate.bytes) },
+    raster: clipping.raster,
+    issues,
+  };
+  writeOutput(args.output, `${JSON.stringify(report, null, 2)}\n`);
+  if (status !== 'PASS') process.exitCode = 2;
+} catch (error) { handleCliError(error); }
