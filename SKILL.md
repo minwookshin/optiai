@@ -54,7 +54,37 @@ node "$SKILL_DIR/scripts/analyze-svg.mjs" icon.svg \
 
 The v0.5 ensemble measures alpha mass, edge distribution, convex-hull center, and reliable symmetry axes. It uses their median as experimental evidence, records agreement and per-size stability, and returns `ABSTAIN` when structural signals materially disagree. It never uses a universal vertical bias. Omit `--engine ensemble` only when reproducing the legacy `alpha-centroid-v1` baseline. The audit records actual painted bounds, side bearings, per-size rasters, source binding, and either `REVIEW`, `NO_CHANGE`, or `ABSTAIN`. Stop when it abstains.
 
-### 4. Optionally collect blinded preference evidence
+### 4. Optionally collect response-driven preference evidence
+
+For fewer, more isolated questions, use the v0.6 adaptive lab. Each trial shows exactly one size and theme. Its deterministic posterior policy chooses the next pair from prior A/B/Tie answers, records response time, and repeats the first pair with reversed presentation to expose within-rater reliability:
+
+```bash
+node "$SKILL_DIR/scripts/create-adaptive-preference-lab.mjs" icon.svg \
+  --analysis optiai-audit.json \
+  --radius-percent 2 \
+  --step-percent 0.5 \
+  --max-trials 16 \
+  --seed project-round-1 \
+  --study-output optiai-adaptive-study.json \
+  --output optiai-adaptive-lab.html
+```
+
+Export complete responses and estimate a transparent, tie-aware ideal point:
+
+```bash
+node "$SKILL_DIR/scripts/export-adaptive-preferences.mjs" icon.svg \
+  panel-01.json panel-02.json panel-03.json \
+  --analysis optiai-audit.json \
+  --study optiai-adaptive-study.json \
+  --output optiai-adaptive-preferences.jsonl
+
+node "$SKILL_DIR/scripts/estimate-ideal-point.mjs" optiai-adaptive-preferences.jsonl \
+  --output optiai-ideal-point.json
+```
+
+The estimator preserves Tie as evidence for an indifference band, excludes Cannot judge, and reports repeat consistency. Fewer than three raters or five usable rows remains `UNDERPOWERED`. The result is descriptive research evidence and never an authorization to correct an SVG.
+
+The original fixed Preference Lab remains available for reproducibility and legacy v0.3–v0.5 datasets:
 
 For repeated calibration, difficult icons, or expert-panel labeling, generate an axis-separated A/B lab:
 
@@ -80,7 +110,7 @@ node "$SKILL_DIR/scripts/export-preferences.mjs" icon.svg \
   --output optiai-preferences.jsonl
 ```
 
-The exporter re-creates every candidate and rejects stale source, audit, study, trial, or presentation lineage. It preserves Tie and ABSTAIN separately. It never creates a verification or application artifact. Read `references/preference-lab.md` before designing a multi-rater study or training a ranker.
+Both exporters re-create every candidate and reject stale source, audit, study, trial, presentation, or adaptive sequence lineage. They preserve Tie and ABSTAIN separately. They never create a verification or application artifact. Read `references/preference-lab.md` before designing a multi-rater study or training a ranker.
 
 ### 5. Optionally aggregate a multi-family calibration corpus
 

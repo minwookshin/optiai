@@ -2,6 +2,14 @@
 
 Use pairwise judgments to calibrate OptiAI for a narrow visual task. Do not claim that the resulting data represents universal taste or authorizes a correction.
 
+## v0.6 adaptive collection
+
+The adaptive lab isolates one `size × theme × axis` condition per question. It starts from a uniform ideal-offset grid, updates that posterior after A, B, or Tie, and chooses the remaining pair with the highest information score. `Cannot judge` is retained but does not update the posterior. The exported order is replayed by the CLI; changing an earlier choice, trial ID, index, or response time invalidates later lineage.
+
+The final question repeats the first pair with A/B reversed. This is a small within-rater reliability check, not proof of expertise. Response time is diagnostic metadata, not a quality score. The policy is deterministic for a bound study and seed so the exporter can reproduce it exactly.
+
+The tie-aware ideal-point estimator searches a bounded, transparent grid for an offset and indifference width. It uses A, B, and Tie likelihoods, excludes `ABSTAIN`, and excludes the repeat from fitting. An `ESTIMATED` artifact still remains `nonAuthorizing` and cannot approve, verify, or apply a correction.
+
 ## Study design
 
 - Judge horizontal and vertical candidates independently.

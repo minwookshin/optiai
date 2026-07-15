@@ -1,6 +1,6 @@
 {
   "name": "optiai",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -12,7 +12,10 @@
     "preference-lab": "node scripts/create-preference-lab.mjs",
     "export-preferences": "node scripts/export-preferences.mjs",
     "aggregate-preferences": "node scripts/aggregate-preferences.mjs",
-    "train-preference-ranker": "node scripts/train-preference-ranker.mjs"
+    "train-preference-ranker": "node scripts/train-preference-ranker.mjs",
+    "adaptive-preference-lab": "node scripts/create-adaptive-preference-lab.mjs",
+    "export-adaptive-preferences": "node scripts/export-adaptive-preferences.mjs",
+    "estimate-ideal-point": "node scripts/estimate-ideal-point.mjs"
   },
   "dependencies": {
     "@resvg/resvg-js": "2.6.2",
