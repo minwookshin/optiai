@@ -1,6 +1,6 @@
 ---
 name: optiai
-description: Audit, compare, collect pairwise preference evidence for, and safely correct optical alignment in SVG icons, logos, glyphs, and icon-text controls. Use when an asset is mathematically centered but looks off-center; when play arrows, chevrons, asymmetric marks, or badges need perceptual balancing; when SVG padding or clipping may be mistaken for alignment; when repeated expert A/B judgments should become training data; or when a design-to-code handoff needs measured offsets and a guarded correction.
+description: Audit, compare, collect pairwise preference evidence for, calibrate a transparent research ranker for, and safely correct optical alignment in SVG icons, logos, glyphs, and icon-text controls. Use when an asset is mathematically centered but looks off-center; when play arrows, chevrons, asymmetric marks, or badges need perceptual balancing; when SVG padding or clipping may be mistaken for alignment; when repeated expert A/B judgments should become leak-resistant training and holdout evidence; or when a design-to-code handoff needs measured offsets and a guarded correction.
 ---
 
 # OptiAI
@@ -16,6 +16,7 @@ Treat geometric centering as a baseline, not a verdict. Measure the painted shap
 - Bind every audit and verification to the exact source path, SHA-256, byte length, and viewBox.
 - Apply only a verification artifact with `status: PASS`; never edit its JSON by hand.
 - Treat every Preference Lab artifact as `nonAuthorizing`. A preferred candidate is training evidence, never approval to modify an SVG.
+- Keep every dataset and ranker `nonAuthorizing`. Never pass a ranker artifact to comparison, verification, or apply commands.
 - Keep each reviewed correction within ±5% per axis. Larger values indicate bounds repair or `ABSTAIN`, not an optical nudge.
 - Keep the original unless the user explicitly requests `--in-place --yes`.
 
@@ -80,7 +81,30 @@ node "$SKILL_DIR/scripts/export-preferences.mjs" icon.svg \
 
 The exporter re-creates every candidate and rejects stale source, audit, study, trial, or presentation lineage. It preserves Tie and ABSTAIN separately. It never creates a verification or application artifact. Read `references/preference-lab.md` before designing a multi-rater study or training a ranker.
 
-### 5. Compare and review each axis
+### 5. Optionally aggregate a multi-family calibration corpus
+
+After collecting at least three independent experts per study, map every source to explicit `sourceId`, `groupId`, and `familyId` values in a corpus manifest. Keep close variants in the same group and family. Then aggregate validated rows:
+
+```bash
+node "$SKILL_DIR/scripts/aggregate-preferences.mjs" corpus.json \
+  --min-raters 3 \
+  --folds 5 \
+  --seed project-calibration-v1 \
+  --output optiai-dataset.json
+```
+
+The dataset canonicalizes reversed A/B presentations, rejects duplicate raters per pair, preserves disagreement, and creates deterministic family and group folds. It is `UNDERPOWERED` with fewer than four eligible families, four eligible groups, or 20 eligible pairs. Read `references/ranker-protocol.md` before defining family or group boundaries.
+
+### 6. Optionally train and evaluate the transparent ranker
+
+```bash
+node "$SKILL_DIR/scripts/train-preference-ranker.mjs" optiai-dataset.json \
+  --output optiai-ranker.json
+```
+
+Training uses dependency-free pairwise logistic regression and out-of-fold evaluation against zero correction and the alpha-centroid proposal. `Tie` and `ABSTAIN` never enter winner loss. Treat `PROMISING_RESEARCH_ONLY` only as evidence that calibration may be useful; it still cannot authorize or apply any correction.
+
+### 7. Compare and review each axis
 
 ```bash
 node "$SKILL_DIR/scripts/render-comparison.mjs" icon.svg \
@@ -92,7 +116,7 @@ node "$SKILL_DIR/scripts/render-comparison.mjs" icon.svg \
 
 Inspect source and reviewed rasters at every target size. Decide horizontal and vertical values independently. Prefer zero or the smallest correction that fixes the imbalance.
 
-### 6. Approve and verify the exact candidate
+### 8. Approve and verify the exact candidate
 
 Only after visual review, run:
 
@@ -108,7 +132,7 @@ node "$SKILL_DIR/scripts/verify-export.mjs" icon.svg \
 
 `PASS` means the comparison hash, per-axis `ACCEPT_PROPOSAL`/`OVERRIDE`/`ZERO` decisions, exact correction, and candidate SHA-256 passed source binding, correction bounds, overflow, and multi-size raster checks. `FAIL` or `REVIEW_REQUIRED` blocks application.
 
-### 7. Apply the verified candidate
+### 9. Apply the verified candidate
 
 ```bash
 node "$SKILL_DIR/scripts/apply-correction.mjs" icon.svg \
@@ -121,8 +145,8 @@ node "$SKILL_DIR/scripts/apply-correction.mjs" icon.svg \
 
 The apply step revalidates the audit, comparison, per-axis review, candidate, and correction digests; requires fresh `--confirm-reviewed`; reruns clipping checks; and writes atomically. For an explicitly requested overwrite use `--in-place --yes`; OptiAI creates a unique exclusive backup unless `--no-backup` is also explicit. Portable filesystem rename has no compare-and-swap, so avoid concurrent edits during the final apply command.
 
-### 8. Report the decision
+### 10. Report the decision
 
-Return the diagnosed category, painted bounds and side bearings, reviewed offsets in percent and pixels, decision/reason codes, comparison path, verification status, output path, and remaining manual-review limits. When a Preference Lab was used, also report the study ID, response count, Tie/ABSTAIN counts, and JSONL path. Do not report a confidence score.
+Return the diagnosed category, painted bounds and side bearings, reviewed offsets in percent and pixels, decision/reason codes, comparison path, verification status, output path, and remaining manual-review limits. When a Preference Lab was used, also report the study ID, response count, Tie/ABSTAIN counts, and JSONL path. For calibration, report family/group counts, eligible pairs, agreement, out-of-fold baseline comparison, and the research-only status. Do not report a correction confidence score.
 
 Read `references/optical-alignment-principles.md` when explaining a difficult perceptual decision.

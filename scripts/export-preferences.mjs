@@ -43,13 +43,14 @@ try {
   if (JSON.stringify(rebuilt) !== JSON.stringify(study)) fail('Study no longer matches its source, audit, or generated candidates.', 'preference-study-lineage-mismatch', 2);
 
   const responses = responsePaths.map((path) => readJson(path));
-  responses.sort((a, b) => String(a.raterId) < String(b.raterId) ? -1 : String(a.raterId) > String(b.raterId) ? 1 : 0);
+  responses.sort((a, b) => String(a.raterId).toLowerCase().localeCompare(String(b.raterId).toLowerCase()) || String(a.raterId).localeCompare(String(b.raterId)));
   const raters = new Set();
   const rows = [];
   for (const response of responses) {
-    if (raters.has(response.raterId)) fail('Each export may contain only one response per rater ID.', 'preference-rater-duplicate', 2);
-    raters.add(response.raterId);
-    rows.push(...preferenceRows(study, response));
+    const canonicalRater = String(response.raterId).toLowerCase();
+    if (raters.has(canonicalRater)) fail('Each export may contain only one case-insensitive response per rater ID.', 'preference-rater-duplicate', 2);
+    raters.add(canonicalRater);
+    rows.push(...preferenceRows(study, response, audit));
   }
   writeOutput(args.output, `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`);
 } catch (error) { handleCliError(error); }

@@ -1,6 +1,6 @@
 {
   "name": "optiai",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -10,7 +10,9 @@
     "check": "for file in scripts/*.mjs scripts/lib/*.mjs tests/*.mjs; do node --check \"$file\" || exit 1; done",
     "test": "node --test",
     "preference-lab": "node scripts/create-preference-lab.mjs",
-    "export-preferences": "node scripts/export-preferences.mjs"
+    "export-preferences": "node scripts/export-preferences.mjs",
+    "aggregate-preferences": "node scripts/aggregate-preferences.mjs",
+    "train-preference-ranker": "node scripts/train-preference-ranker.mjs"
   },
   "dependencies": {
     "@resvg/resvg-js": "2.6.2",
