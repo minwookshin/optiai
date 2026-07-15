@@ -122,3 +122,14 @@ test('ideal-point estimation rejects mixed provenance and abstain-only raters do
   mixed[0].datumDigest = sha256(JSON.stringify(core));
   assert.throws(() => estimateIdealPoint([...one, mixed[0]]), /mixes different studies|provenance/i);
 });
+
+test('ideal-point estimation rejects rehashed malformed values and cherry-picked sequences', () => {
+  const study = buildAdaptiveStudy(base, { seed: 'adversarial-test', maxTrials: 8 });
+  const rows = ['panel-01', 'panel-02', 'panel-03'].flatMap((id) => adaptivePreferenceRows(study, responseFor(study, id)));
+  const malformed = structuredClone(rows);
+  malformed[0].trial.values.A = 'not-a-number';
+  const { datumDigest: _ignored, ...malformedCore } = malformed[0];
+  malformed[0].datumDigest = sha256(JSON.stringify(malformedCore));
+  assert.throws(() => estimateIdealPoint(malformed), /semantics|invalid/i);
+  assert.throws(() => estimateIdealPoint(rows.filter((row) => row.presentedIndex < 2)), /incomplete|sequence/i);
+});

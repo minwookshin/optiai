@@ -1,6 +1,6 @@
 ---
 name: optiai
-description: Audit, compare, collect pairwise preference evidence for, calibrate a transparent research ranker for, and safely correct optical alignment in SVG icons, logos, glyphs, and icon-text controls. Use when an asset is mathematically centered but looks off-center; when play arrows, chevrons, asymmetric marks, or badges need perceptual balancing; when SVG padding or clipping may be mistaken for alignment; when repeated expert A/B judgments should become leak-resistant training and holdout evidence; or when a design-to-code handoff needs measured offsets and a guarded correction.
+description: Audit, compare, collect pairwise preference evidence for, calibrate and benchmark a transparent research ranker for, and safely correct optical alignment in SVG icons, logos, glyphs, and icon-text controls. Use when an asset is mathematically centered but looks off-center; when play arrows, chevrons, asymmetric marks, or badges need perceptual balancing; when SVG padding or clipping may be mistaken for alignment; when repeated panel A/B judgments should become leak-resistant training and fixed-holdout evidence; or when a design-to-code handoff needs measured offsets and a guarded correction.
 ---
 
 # OptiAI
@@ -135,7 +135,28 @@ node "$SKILL_DIR/scripts/train-preference-ranker.mjs" optiai-dataset.json \
 
 Training uses dependency-free pairwise logistic regression and out-of-fold evaluation against zero correction and the alpha-centroid proposal. `Tie` and `ABSTAIN` never enter winner loss. Treat `PROMISING_RESEARCH_ONLY` only as evidence that calibration may be useful; it still cannot authorize or apply any correction.
 
-### 7. Compare and review each axis
+### 7. Run a fixed holdout benchmark before trusting learned calibration
+
+Before relying on a learned calibration across sources, run the v0.7 fixed holdout benchmark. The manifest must use sources, families, and groups absent from the exact bound training dataset. Each case binds the four policies (`zero-v1`, `alpha-centroid-v1`, `ensemble-v05`, and `learned-v06`), one axis, one size, one theme, and one context:
+
+```bash
+node "$SKILL_DIR/scripts/create-fixed-benchmark.mjs" benchmark-manifest.json \
+  --dataset optiai-dataset.json \
+  --model optiai-ranker.json \
+  --study-output optiai-benchmark-study.json \
+  --output optiai-benchmark-lab.html
+
+node "$SKILL_DIR/scripts/evaluate-fixed-benchmark.mjs" panel-01.json panel-02.json \
+  --study optiai-benchmark-study.json \
+  --output optiai-benchmark-report.json
+
+node "$SKILL_DIR/scripts/check-benchmark-promotion.mjs" optiai-benchmark-report.json \
+  --output optiai-benchmark-gate.json
+```
+
+The promotion thresholds are fixed in `optiai-fixed-v1`; they cannot be relaxed through CLI flags after seeing results. Without 40 holdout source hashes each receiving at least five A/B votes against every baseline, six families, eight groups, 120 decisive votes against every baseline, a Wilson lower bound above 0.5, family-macro wins, non-regressed coverage, and a clean hazard suite, the gate remains `UNDERPOWERED` or `BASELINE_NOT_BEATEN`. Even `PROMISING_RESEARCH_ONLY` is not production readiness, expert accuracy, or correction approval. Read `references/benchmark-protocol.md` before collecting responses.
+
+### 8. Compare and review each axis
 
 ```bash
 node "$SKILL_DIR/scripts/render-comparison.mjs" icon.svg \
@@ -147,7 +168,7 @@ node "$SKILL_DIR/scripts/render-comparison.mjs" icon.svg \
 
 Inspect source and reviewed rasters at every target size. Decide horizontal and vertical values independently. Prefer zero or the smallest correction that fixes the imbalance.
 
-### 8. Approve and verify the exact candidate
+### 9. Approve and verify the exact candidate
 
 Only after visual review, run:
 
@@ -163,7 +184,7 @@ node "$SKILL_DIR/scripts/verify-export.mjs" icon.svg \
 
 `PASS` means the comparison hash, per-axis `ACCEPT_PROPOSAL`/`OVERRIDE`/`ZERO` decisions, exact correction, and candidate SHA-256 passed source binding, correction bounds, overflow, and multi-size raster checks. `FAIL` or `REVIEW_REQUIRED` blocks application.
 
-### 9. Apply the verified candidate
+### 10. Apply the verified candidate
 
 ```bash
 node "$SKILL_DIR/scripts/apply-correction.mjs" icon.svg \
@@ -176,7 +197,7 @@ node "$SKILL_DIR/scripts/apply-correction.mjs" icon.svg \
 
 The apply step revalidates the audit, comparison, per-axis review, candidate, and correction digests; requires fresh `--confirm-reviewed`; reruns clipping checks; and writes atomically. For an explicitly requested overwrite use `--in-place --yes`; OptiAI creates a unique exclusive backup unless `--no-backup` is also explicit. Portable filesystem rename has no compare-and-swap, so avoid concurrent edits during the final apply command.
 
-### 10. Report the decision
+### 11. Report the decision
 
 Return the diagnosed category, painted bounds and side bearings, reviewed offsets in percent and pixels, signal-agreement band and disagreements, decision/reason codes, comparison path, verification status, output path, and remaining manual-review limits. When a Preference Lab was used, also report the study ID, response count, Tie/ABSTAIN counts, and JSONL path. For calibration, report family/group counts, eligible pairs, agreement, out-of-fold baseline comparison, and the research-only status. Do not report a correction confidence score.
 
