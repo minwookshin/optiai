@@ -32,6 +32,15 @@ function approvedVerification(source, audit, dir, dx, dy) {
   return { comparison, verification, verified };
 }
 
+function preferenceStudy(fixture = 'play.svg', extra = []) {
+  const analyzed = analyze(fixture);
+  const source = join(fixtures, fixture);
+  const study = join(analyzed.dir, 'preference-study.json');
+  const html = join(analyzed.dir, 'preference-study.html');
+  const result = run('create-preference-lab.mjs', [source, '--analysis', analyzed.audit, '--seed', 'test-seed', '--radius-percent', '2', '--step-percent', '1', '--study-output', study, '--output', html, ...extra]);
+  return { ...analyzed, source, study, html, studyReport: existsSync(study) ? json(study) : null, studyResult: result };
+}
+
 test('security: rejects active content and does not expand entities', () => {
   const { result, report } = analyze('malicious.svg');
   assert.equal(result.status, 2);
@@ -293,4 +302,135 @@ test('explicit false boolean flags never authorize verification or apply', () =>
   const applied = run('apply-correction.mjs', [source, '--analysis', audit, '--comparison', comparison, '--verification', verification, '--confirm-reviewed=false', '--output', output]);
   assert.equal(applied.status, 1);
   assert.equal(existsSync(output), false);
+});
+
+test('preference lab: creates a deterministic blinded study without source markup', () => {
+  const first = preferenceStudy();
+  assert.equal(first.studyResult.status, 0, first.studyResult.stderr);
+  assert.equal(first.studyReport.schemaVersion, 1);
+  assert.equal(first.studyReport.tool, 'OptiAI Preference Lab');
+  assert.match(first.studyReport.studyId, /^[a-f0-9]{64}$/);
+  assert.ok(first.studyReport.trials.length >= 4);
+  assert.ok(first.studyReport.candidates.length >= 4);
+  assert.ok(first.studyReport.trials.every((trial) => trial.presentation?.A && trial.presentation?.B && !Object.hasOwn(trial, 'winner')));
+  assert.ok(first.studyReport.candidates.every((candidate) => Math.abs(candidate.correction.dxPercent) <= 5 && Math.abs(candidate.correction.dyPercent) <= 5));
+  assert.ok(first.studyReport.candidates.every((candidate) => candidate.clipping.clipped === false));
+  assert.doesNotMatch(readFileSync(first.study, 'utf8'), /data:image|M8 5L19 12L8 19Z/);
+  const html = readFileSync(first.html, 'utf8');
+  const encodedPayload = html.match(/atob\('([^']+)'\)/)?.[1];
+  assert.ok(encodedPayload);
+  assert.match(Buffer.from(encodedPayload, 'base64').toString('utf8'), /data:image\/png;base64,/);
+  assert.doesNotMatch(html, /M8 5L19 12L8 19Z|<script\s+src=|play\.svg|dxPercent|dyPercent|candidateSha256/i);
+
+  const secondStudy = join(first.dir, 'second-study.json');
+  const secondHtml = join(first.dir, 'second-study.html');
+  const second = run('create-preference-lab.mjs', [first.source, '--analysis', first.audit, '--seed', 'test-seed', '--radius-percent', '2', '--step-percent', '1', '--study-output', secondStudy, '--output', secondHtml]);
+  assert.equal(second.status, 0, second.stderr);
+  assert.equal(readFileSync(secondStudy, 'utf8'), readFileSync(first.study, 'utf8'));
+});
+
+test('preference lab: keeps each trial on one independent axis and binds raster evidence', () => {
+  const { studyResult, studyReport } = preferenceStudy();
+  assert.equal(studyResult.status, 0, studyResult.stderr);
+  const candidates = new Map(studyReport.candidates.map((candidate) => [candidate.id, candidate]));
+  for (const trial of studyReport.trials) {
+    const a = candidates.get(trial.presentation.A);
+    const b = candidates.get(trial.presentation.B);
+    assert.ok(a && b);
+    if (trial.axis === 'x') {
+      assert.equal(a.correction.dyPercent, 0);
+      assert.equal(b.correction.dyPercent, 0);
+    } else {
+      assert.equal(a.correction.dxPercent, 0);
+      assert.equal(b.correction.dxPercent, 0);
+    }
+    assert.ok(a.rasters.every((raster) => /^[a-f0-9]{64}$/.test(raster.sha256)));
+    assert.ok(b.rasters.every((raster) => /^[a-f0-9]{64}$/.test(raster.sha256)));
+  }
+});
+
+test('preference lab: exports complete responses as deterministic training JSONL', () => {
+  const { dir, study, studyResult, studyReport } = preferenceStudy();
+  assert.equal(studyResult.status, 0, studyResult.stderr);
+  const response = join(dir, 'expert-01.json');
+  writeFileSync(response, JSON.stringify({
+    schemaVersion: 1,
+    tool: 'OptiAI Preference Response',
+    studyId: studyReport.studyId,
+    studyDigest: studyReport.studyDigest,
+    raterId: 'expert-01',
+    responses: studyReport.trials.map((trial, index) => ({ trialId: trial.id, choice: ['A', 'B', 'TIE', 'ABSTAIN'][index % 4] })),
+  }));
+  const output = join(dir, 'preferences.jsonl');
+  const exported = run('export-preferences.mjs', [join(fixtures, 'play.svg'), '--analysis', join(dir, 'audit.json'), '--study', study, response, '--output', output]);
+  assert.equal(exported.status, 0, exported.stderr);
+  const lines = readFileSync(output, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(lines.length, studyReport.trials.length);
+  assert.ok(lines.every((line) => line.studyId === studyReport.studyId && line.raterId === 'expert-01'));
+  assert.ok(lines.every((line) => ['A', 'B', 'TIE', 'ABSTAIN'].includes(line.choice)));
+  assert.ok(lines.filter((line) => line.choice === 'A' || line.choice === 'B').every((line) => /^[a-f0-9]{64}$/.test(line.preferredCandidateId)));
+
+  const second = join(dir, 'preferences-second.jsonl');
+  const reorderedResponse = join(dir, 'expert-01-reordered.json');
+  const responseDocument = json(response);
+  responseDocument.responses.reverse();
+  writeFileSync(reorderedResponse, JSON.stringify(responseDocument));
+  assert.equal(run('export-preferences.mjs', [join(fixtures, 'play.svg'), '--analysis', join(dir, 'audit.json'), '--study', study, reorderedResponse, '--output', second]).status, 0);
+  assert.equal(readFileSync(second, 'utf8'), readFileSync(output, 'utf8'));
+});
+
+test('preference lab: rejects incomplete, duplicate, and unknown responses', () => {
+  const { dir, study, studyResult, studyReport } = preferenceStudy();
+  assert.equal(studyResult.status, 0, studyResult.stderr);
+  const invalidCases = [
+    studyReport.trials.slice(0, -1).map((trial) => ({ trialId: trial.id, choice: 'A' })),
+    studyReport.trials.map((trial) => ({ trialId: trial.id, choice: 'A' })).concat({ trialId: studyReport.trials[0].id, choice: 'B' }),
+    studyReport.trials.map((trial, index) => ({ trialId: index === 0 ? 'unknown' : trial.id, choice: 'A' })),
+  ];
+  for (const [index, responses] of invalidCases.entries()) {
+    const response = join(dir, `invalid-${index}.json`);
+    const output = join(dir, `invalid-${index}.jsonl`);
+    writeFileSync(response, JSON.stringify({ schemaVersion: 1, tool: 'OptiAI Preference Response', studyId: studyReport.studyId, studyDigest: studyReport.studyDigest, raterId: 'expert-01', responses }));
+    const exported = run('export-preferences.mjs', [join(fixtures, 'play.svg'), '--analysis', join(dir, 'audit.json'), '--study', study, response, '--output', output]);
+    assert.equal(exported.status, 2);
+    assert.equal(existsSync(output), false);
+  }
+});
+
+test('preference lab: rejects tampered studies and never treats labels as apply approval', () => {
+  const { dir, study, studyResult, studyReport } = preferenceStudy();
+  assert.equal(studyResult.status, 0, studyResult.stderr);
+  const tampered = join(dir, 'tampered-study.json');
+  const changed = structuredClone(studyReport);
+  changed.candidates[0].correction.dxPercent = 4.9;
+  writeFileSync(tampered, JSON.stringify(changed));
+  const response = join(dir, 'response.json');
+  writeFileSync(response, JSON.stringify({ schemaVersion: 1, tool: 'OptiAI Preference Response', studyId: studyReport.studyId, studyDigest: studyReport.studyDigest, raterId: 'expert-01', responses: studyReport.trials.map((trial) => ({ trialId: trial.id, choice: 'A' })) }));
+  const output = join(dir, 'must-not-exist.jsonl');
+  const exported = run('export-preferences.mjs', [join(fixtures, 'play.svg'), '--analysis', join(dir, 'audit.json'), '--study', tampered, response, '--output', output]);
+  assert.equal(exported.status, 2);
+  assert.equal(existsSync(output), false);
+  assert.equal(containsKey(studyReport, 'approved'), false);
+  assert.equal(containsKey(studyReport, 'verification'), false);
+});
+
+test('preference lab: refuses unsafe sources and bounds-repair cases', () => {
+  for (const fixture of ['malicious.svg', 'left-dot.svg', 'empty.svg']) {
+    const { studyResult, study, html } = preferenceStudy(fixture);
+    assert.equal(studyResult.status, 2, `${fixture} should not produce a study`);
+    assert.equal(existsSync(study), false);
+    assert.equal(existsSync(html), false);
+  }
+});
+
+test('preference lab: rejects an unbounded candidate grid before rendering', () => {
+  const { dir, audit, result } = analyze('play.svg');
+  assert.equal(result.status, 0);
+  const study = join(dir, 'too-large.json');
+  const html = join(dir, 'too-large.html');
+  const generated = run('create-preference-lab.mjs', [join(fixtures, 'play.svg'), '--analysis', audit, '--radius-percent', '5', '--step-percent', '0.1', '--study-output', study, '--output', html]);
+  assert.equal(generated.status, 1);
+  assert.match(generated.stderr, /exceeds 25 candidates or 32 trials/i);
+  assert.equal(existsSync(study), false);
+  assert.equal(existsSync(html), false);
 });
